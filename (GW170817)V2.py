@@ -1,0 +1,103 @@
+from gwpy.timeseries import TimeSeries
+from scipy.signal.windows import tukey
+import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
+import numpy as np
+
+# Fetch the data as before
+event_time = 1187008882.4  # time
+start = event_time - 30    # 30 seconds before the event
+end = event_time + 30      # 30 seconds after the event
+data = TimeSeries.fetch_open_data('L1', start, end)
+
+# Plot the raw data
+plot = data.plot(title='LIGO Livingston Observatory data around GW170817')
+plot.show()
+
+# Whitening the data
+whitened_data = data.whiten()
+
+# Refining the band-pass filtering parameters
+filtered_data = whitened_data.bandpass(30, 300)
+filtered_plot = filtered_data.plot(title='Filtered data around GW170817')
+filtered_plot.show()
+
+# Apply a tukey window to reduce edge effects
+tukey_window = tukey(data.size, alpha=1.0/8)
+windowed_data = filtered_data * tukey_window
+
+# Perform a Q-transform with optimized parameters
+q_transform = windowed_data.q_transform(frange=(30, 300), qrange=(100, 110))
+
+# Plot the Q-transform
+q_plot = q_transform.plot()
+ax = q_plot.gca()
+ax.set_epoch(event_time)
+ax.set_yscale('log')
+q_plot.colorbar(label="Normalized energy")
+q_plot.show()
+
+# Define the model function
+def gravitational_wave_freq(t, Mc, tc):
+    """
+    Gravitational wave frequency model as a function of time.
+    :param t: Time (s)
+    :param Mc: Chirp mass
+    :param tc: Coalescence time
+    :return: Frequency (Hz)
+    """
+    return (1/np.pi) * ((5/256) * (1/Mc**(5/3)) * (tc - t)**(-5/8))**(3/8)
+
+# Time array centered at event
+t_data = np.linspace(-30, 30, 1000) + event_time
+f_data = q_transform.value  
+
+# Fit the model to the estimated frequency data from Q-transform
+params, params_covariance = curve_fit(gravitational_wave_freq, t_data, f_data.max(axis=1), p0=[1.2, event_time])
+
+# Plot the frequency fit
+plt.figure(figsize=(10, 6))
+plt.plot(t_data - event_time, gravitational_wave_freq(t_data, *params), label='Fitted function', color='red')
+plt.xlabel('Time (s) from event')
+plt.ylabel('Frequency (Hz)')
+plt.title('Fit of Gravitational Wave Frequency Model to Data')
+plt.legend()
+plt.show()
+
+print("Fitted parameters (Chirp Mass, Coalescence Time):", params)
+
+# Define the event time for GW170817
+event_time = 1187008882.4  # GW170817 event time
+start2 = event_time - 2048  # Start time of the 2048 seconds of data before the event
+end2 = event_time           # End time is the event time
+
+# Use the fetch_open_data method to get data from the LIGO Hanford and Livingston detectors
+data_hanford = TimeSeries.fetch_open_data('H1', start2, end2)
+data_livingston = TimeSeries.fetch_open_data('L1', start2, end2)
+
+# Compute the Amplitude Spectral Density (ASD) for both Hanford and Livingston
+# Amplitude spectral density (ASD) is the square root of the power spectral density (PSD),
+asd_hanford = data_hanford.asd(fftlength=16, method='median')
+asd_livingston = data_livingston.asd(fftlength=16, method='median')
+
+# Plot the ASD for both LIGO detectors
+plt.figure(figsize=(10, 6))
+plt.loglog(asd_hanford.frequencies, asd_hanford, label='LIGO Hanford')
+plt.loglog(asd_livingston.frequencies, asd_livingston, label='LIGO Livingston')
+
+# The horizontal axis represents the frequency of the noise in the detectors, measured in Hertz (Hz). 
+plt.xlim(10, 2048)  # Focus on the most sensitive frequency band. 
+# The vertical axis shows the strain sensitivity of the detectors, also on a logarithmic scale.
+# It is measured in units of strain per square root of Hz (Hz^{-1/2}). 
+# Lower values mean the detector is more sensitive to potential gravitational wave signals at that frequency.
+
+plt.ylim(1e-24, 1e-19)  # Set y-axis limits to reasonable ASD values
+plt.xlabel('Frequency (Hz)')
+plt.ylabel('Amplitude Spectral Density [Hz$^{-1/2}$]')
+plt.title('LIGO Sensitivity Curve around GW170817')
+plt.legend()
+plt.grid(True, which='both', ls='--', lw=0.5)
+plt.show()
+
+# Save the filtered time series as an audio file
+whitened_data.write("GW170817_audio.wav", format='wav')
